@@ -9,6 +9,8 @@ date: '`r format(Sys.Date(), "%B %d, %Y")`'
 
 
 Code to accompany [this blog post](https://kieranhealy.org/blog/archives/2020/04/23/apples-covid-mobility-data/). 
+If you don't have them, install the required libraries with `install.packages()`. Install the `covdata` package 
+by following [the instructions at the package's homepage](https://kjhealy.github.io/covdata).
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, 
