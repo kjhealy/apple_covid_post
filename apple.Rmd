@@ -5,18 +5,6 @@ author:
   affiliation: Duke University
   email: kjhealy@soc.duke.edu
 date: '`r format(Sys.Date(), "%B %d, %Y")`'
-crossrefYaml: "config/pandoc-crossref-settings.yaml"
-output:
-  html_document: distill::distill_article
-  pdf_document: 
-    md_extensions: +simple_tables+table_captions+yaml_metadata_block+smart
-    template: /Users/kjhealy/.pandoc/templates/rmd-latex.template
-    pandoc_args: [
-      "--bibliography", "/Users/kjhealy/Documents/bibs/socbib-pandoc.bib",
-      "--filter", "pandoc-crossref",
-      "--filter", "pandoc-citeproc",
-      "--csl", "/Users/kjhealy/.pandoc/csl/ajps.csl"
-      ]      
 ---
 
 
