@@ -1,0 +1,449 @@
+---
+title: "Apple's mobility data"
+author:
+- name: Kieran Healy
+  affiliation: Duke University
+  email: kjhealy@soc.duke.edu
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+crossrefYaml: "config/pandoc-crossref-settings.yaml"
+output:
+  html_document: distill::distill_article
+  pdf_document: 
+    md_extensions: +simple_tables+table_captions+yaml_metadata_block+smart
+    template: /Users/kjhealy/.pandoc/templates/rmd-latex.template
+    pandoc_args: [
+      "--bibliography", "/Users/kjhealy/Documents/bibs/socbib-pandoc.bib",
+      "--filter", "pandoc-crossref",
+      "--filter", "pandoc-citeproc",
+      "--csl", "/Users/kjhealy/.pandoc/csl/ajps.csl"
+      ]      
+---
+
+
+Code to accompany [this blog post](https://kieranhealy.org/blog/archives/2020/04/23/apples-covid-mobility-data/). 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, 
+                      fig.showtext = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(here)
+library(janitor)
+library(socviz)
+library(ggrepel)
+library(covdata)
+
+## --------------------------------------------------------------------
+## Custom font and theme, omit if you don't have the myriad library
+## (https://github.com/kjhealy/myriad) and associated Adobe fonts.
+## --------------------------------------------------------------------
+library(showtext)
+showtext_auto()
+library(myriad)
+import_myriad_semi()
+
+theme_covid <- function() {
+  theme_myriad_semi() +
+    theme(plot.title = element_text(size = rel(2), face = "bold"),
+          plot.subtitle = element_text(size = rel(1.5)),
+          plot.caption = element_text(size = rel(0.9)),
+          axis.text.y = element_text(size = rel(2)),
+          axis.title.x = element_text(size = rel(1.5)),
+          axis.title.y = element_text(size = rel(1.5)),
+          axis.text.x = element_text(size = rel(2)),
+          legend.text = element_text(size = rel(2))
+    )
+}
+
+
+theme_set(theme_myriad_semi())
+## --------------------------------------------------------------------
+
+
+## --------------------------------------------------------------------
+## For the time series decomposition
+library(tsibble)
+library(feasts)
+library(timeDate)
+## --------------------------------------------------------------------
+
+## --------------------------------------------------------------------
+## Convenience functions
+## --------------------------------------------------------------------
+
+## such an ugly function (because it's like 10 years old)
+my_colors <- function(palette="cb"){
+### The palette with black:
+  cb.palette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+  ## Same one Reversed
+  rcb.palette <- rev(cb.palette)
+  ## Blue and yellow first choices
+  bly.palette <- c("#E69F00", "#0072B2", "#000000", "#56B4E9", "#009E73", "#F0E442", "#D55E00", "#CC79A7")
+  if (palette=="cb") return(cb.palette) else if (palette=="rcb") return(rcb.palette) else if (palette=="bly") return(bly.palette) else stop("Choose cb, rcb, or bly ony.")
+}
+
+is_max <- function(x) {
+  seq_along(x) == which.max(x)
+}
+
+## Check for figures/ 
+ifelse(!dir.exists(here("figures")),
+       dir.create(file.path("figures")),
+       FALSE)
+
+
+```
+
+
+```{r}
+head(apple_mobility)
+tail(apple_mobility)
+```
+
+```{r}
+## Quick look
+p_base_all <- apple_mobility %>%
+  filter(geo_type == "city") %>%
+  select(region:index) %>%
+  rename(mode = transportation_type) %>%
+  ggplot(aes(x = date, y = index, group = mode, color = mode)) +
+  geom_line(size = 0.5) +
+  scale_color_manual(values = my_colors("bly")) +
+  facet_wrap(~ region, ncol = 8) +
+  labs(x = "Date", y = "Trend",
+       color = "Mode",
+       title = "All Modes, All Cities, Base Data",
+       caption = "Data: Apple. Graph: @kjhealy") +
+  theme(legend.position = "top")
+
+ggsave(here("data-raw/figures/all_cities_raw.png"), p_base_all, width = 20, height = 30, dpi = 300)
+
+
+
+apple_mobility %>%
+  filter(geo_type == "city") %>%
+  select(region:index) %>%
+  rename(mode = transportation_type) %>%
+  as_tsibble(key = c(region, mode)) %>%
+  model(STL(index)) %>%
+  components() %>%
+  ggplot(aes(x = date, y = remainder, group = mode, color = mode)) +
+  geom_line(size = 0.5) +
+  scale_color_manual(values = my_colors("bly")) +
+  facet_wrap(~ region, ncol = 8) +
+  labs(x = "Date", y = "Trend",
+       color = "Mode",
+       title = "Driving, Selected Cities, Trend Component",
+       caption = "Data: Apple. Graph: @kjhealy") +
+  theme(legend.position = "top")
+
+
+
+focus_on <- c("Rio de Janeiro", "Lyon", "Bochum - Dortmund", "Dusseldorf",
+              "Barcelona", "Detroit", "Toulouse", "Stuttgart",
+              "Cologne", "Hamburg", "Cairo", "Lille")
+
+## Raw
+raw_ts <- apple_mobility %>%
+  filter(geo_type == "city") %>%
+  select(region:index) %>%
+  rename(mode = transportation_type) %>%
+  mutate(mode = tools::toTitleCase(mode),
+         weekend = isWeekend(date),
+         holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
+  filter(region %in% focus_on) %>%
+  group_by(region) %>%
+  mutate(max_day = ifelse(is_max(index), date, NA),
+         max_day = as_date(max_day))
+
+
+raw_ts %>%
+  filter(!is.na(max_day))
+
+p_raw <- ggplot(raw_ts, mapping = aes(x = date, y = index,
+                       group = mode, color = mode)) +
+  geom_vline(data = subset(raw_ts, holiday == TRUE),
+             mapping = aes(xintercept = date),
+             color = my_colors("bly")[5], size = 1.5, alpha = 0.1) +
+  geom_hline(yintercept = 100, color = "gray40") +
+  geom_line() +
+  geom_text_repel(aes(label = format(max_day, format = "%a %b %d")),
+                  size = rel(2), nudge_x = 1, show.legend = FALSE) +
+  scale_color_manual(values = my_colors("bly")) +
+  facet_wrap(~ region) +
+  labs(x = "Date", y = "Relative Mobility",
+       color = "Mode",
+       title = "Relative trends in activity, selected cities. Baseline data with no correction for weekly seasonality",
+       subtitle = "Data are indexed to 100 for each city's usage on January 13th 2020. Weekends shown as vertical bars. Date with highest relative activity index labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       caption = "Data: Apple. Graph: @kjhealy") +
+  theme(legend.position = "top")
+
+p_raw
+
+ggsave(here("data-raw/figures/raw.pdf"), p_raw, width = 15, height = 10)
+
+
+p_raw_tall <- ggplot(raw_ts, mapping = aes(x = date, y = index,
+                                      group = mode, color = mode)) +
+  geom_vline(data = subset(raw_ts, holiday == TRUE),
+             mapping = aes(xintercept = date),
+             color = my_colors("bly")[5], size = 1.5, alpha = 0.1) +
+  geom_hline(yintercept = 100, color = "gray40") +
+  geom_line() +
+  geom_text_repel(aes(label = format(max_day, format = "%a %b %d")),
+                  size = rel(2), nudge_x = 1, show.legend = FALSE) +
+  scale_color_manual(values = my_colors("bly")) +
+  facet_wrap(~ region, ncol = 2) +
+  labs(x = "Date", y = "Relative Mobility",
+       color = "Mode",
+       title = "Relative trends in activity, selected cities. No seasonal correction.",
+       subtitle = "Data are indexed to 100 for each city's usage on January 13th 2020. Weekends shown as vertical bars.\nDate with highest relative activity index labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       caption = "Data: Apple. Graph: @kjhealy") +
+  theme(legend.position = "top")
+
+ggsave(here("data-raw/figures/raw_tall.pdf"), p_raw_tall, width = 8, height = 12)
+ggsave(here("data-raw/figures/raw_tall.png"), p_raw_tall, width = 8, height = 12, dpi = 300)
+
+feats <- apple_mobility %>%
+  filter(geo_type == "city") %>%
+  select(region:index) %>%
+  rename(mode = transportation_type) %>%
+  mutate(mode = tools::toTitleCase(mode)) %>%
+  filter(region %in% focus_on) %>%
+  as_tsibble(key = c(region, mode)) %>%
+  features(index, feature_set(tags = "stl"))
+
+resids <- apple_mobility %>%
+  filter(geo_type == "city") %>%
+  select(region:index) %>%
+  rename(mode = transportation_type) %>%
+  mutate(mode = tools::toTitleCase(mode)) %>%
+  filter(region %in% focus_on) %>%
+  as_tsibble(key = c(region, mode)) %>%
+#  model(classical_decomposition(index)) %>%
+  model(STL(index)) %>%
+  components() %>%
+  mutate(weekend = isWeekend(date),
+         holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
+  as_tibble() %>%
+  group_by(region) %>%
+  mutate(max_day = ifelse(is_max(remainder), date, NA),
+         max_day = as_date(max_day))
+
+p <- ggplot(resids, aes(x = date, y = remainder, group = mode, color = mode)) +
+  geom_vline(data = subset(resids, holiday == TRUE),
+             mapping = aes(xintercept = date),
+             color = my_colors("bly")[5], size = 1.5, alpha = 0.1) +
+  geom_line(size = 0.5) +
+  geom_text_repel(aes(label = format(max_day, format = "%a %b %d")),
+                  size = rel(2), nudge_x = 1, show.legend = FALSE) +
+  scale_color_manual(values = my_colors("bly")) +
+  facet_wrap(~ region) +
+  labs(x = "Date", y = "Remainder", color = "Mode",
+       title = "Remainder component for activity data (after trend and weekly components removed)",
+       subtitle = "Weekends shown as vertical bars. Date with highest remainder component labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       caption = "Data: Apple. Graph: @kjhealy") +
+  theme(legend.position = "top")
+
+ggsave("figures/remainders.pdf", p, width = 15, height = 10)
+
+p_resid_tall <- ggplot(resids, aes(x = date, y = remainder, group = mode, color = mode)) +
+  geom_vline(data = subset(resids, holiday == TRUE),
+             mapping = aes(xintercept = date),
+             color = my_colors("bly")[5], size = 1.5, alpha = 0.1) +
+  geom_line(size = 0.5) +
+  geom_text_repel(aes(label = format(max_day, format = "%a %b %d")),
+                  size = rel(2), nudge_x = 1, show.legend = FALSE) +
+  scale_color_manual(values = my_colors("bly")) +
+  facet_wrap(~ region, ncol = 2) +
+  labs(x = "Date", y = "Remainder", color = "Mode",
+       title = "Remainder component for activity data (after trend and weekly components removed)",
+       subtitle = "Weekends shown as vertical bars. Date with highest remainder component labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       caption = "Data: Apple. Graph: @kjhealy") +
+  theme(legend.position = "top")
+
+
+ggsave(here("data-raw/figures/remainders_tall.pdf"), p_resid_tall, width = 8, height = 12)
+ggsave(here("data-raw/figures/remainders_tall.png"), p_resid_tall, width = 8, height = 12, dpi = 300)
+
+
+
+## NYC
+
+raw_ny <- apple_mobility %>%
+  filter(region == "New York City") %>%
+  select(region:index) %>%
+  rename(mode = transportation_type) %>%
+  mutate(mode = tools::toTitleCase(mode),
+         weekend = isWeekend(date),
+         holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
+  mutate(max_day = ifelse(is_max(index), date, NA),
+         max_day = as_date(max_day))
+
+p_raw_ny <- ggplot(raw_ny, mapping = aes(x = date, y = index,
+                                      group = mode, color = mode)) +
+  geom_vline(data = subset(raw_ny, holiday == TRUE),
+             mapping = aes(xintercept = date),
+             color = my_colors("bly")[5], size = 2.9, alpha = 0.1) +
+  geom_hline(yintercept = 100, color = "gray40") +
+  geom_line() +
+  geom_text_repel(aes(label = format(max_day, format = "%a %b %d")),
+                  size = rel(2), nudge_x = 1, show.legend = FALSE) +
+  scale_color_manual(values = my_colors("bly")) +
+  labs(x = "Date", y = "Relative Mobility",
+       color = "Mode",
+       title = "New York City's relative trends in activity. Baseline data with no correction for weekly seasonality",
+       subtitle = "Data are indexed to 100 for usage on January 13th 2020. Weekends shown as vertical bars. Date with highest relative activity index labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       caption = "Data: Apple. Graph: @kjhealy") +
+  theme(legend.position = "top")
+
+p_raw_ny
+
+ggsave(here("data-raw/figures/nyc_raw.pdf"), plot = p_raw_ny, height = 7, width = 10)
+ggsave(here("data-raw/figures/nyc_raw.png"), plot = p_raw_ny, height = 7, width = 10, dpi = 300)
+
+resids_ny <- apple_mobility %>%
+  filter(region == "New York City") %>%
+  select(region:index) %>%
+  rename(mode = transportation_type) %>%
+  mutate(mode = tools::toTitleCase(mode)) %>%
+  as_tsibble(key = c(region, mode)) %>%
+  model(STL(index)) %>%
+  components() %>%
+  mutate(weekend = isWeekend(date),
+         holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
+  as_tibble() %>%
+  mutate(max_day = ifelse(is_max(remainder), date, NA),
+         max_day = as_date(max_day))
+
+p_resid_ny <- ggplot(resids_ny, aes(x = date, y = remainder, group = mode, color = mode)) +
+  geom_vline(data = subset(resids, holiday == TRUE),
+             mapping = aes(xintercept = date),
+             color = my_colors("bly")[5], size = 2.9, alpha = 0.1) +
+  geom_line(size = 0.5) +
+  geom_text_repel(aes(label = format(max_day, format = "%a %b %d")),
+                  size = rel(2), nudge_x = 1, show.legend = FALSE) +
+  scale_color_manual(values = my_colors("bly")) +
+  labs(x = "Date", y = "Remainder", color = "Mode",
+       title = "New York City, Remainder component for activity data",
+       subtitle = "Weekends shown as vertical bars. Date with highest remainder component labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       caption = "Data: Apple. Graph: @kjhealy") +
+  theme(legend.position = "top")
+
+ggsave(here("data-raw/figures/nyc_remainders.pdf"), p_resid_ny, width = 10, height = 7)
+ggsave(here("data-raw/figures/nyc_remainders.png"), p_resid_ny, width = 10, height = 7, dpi = 300)
+
+trend_ny <- apple_mobility %>%
+  filter(region == "New York City") %>%
+  select(region:index) %>%
+  rename(mode = transportation_type) %>%
+  mutate(mode = tools::toTitleCase(mode)) %>%
+  as_tsibble(key = c(region, mode)) %>%
+  model(STL(index)) %>%
+  components() %>%
+  mutate(weekend = isWeekend(date),
+         holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
+  as_tibble() %>%
+  mutate(max_day = ifelse(is_max(remainder), date, NA),
+         max_day = as_date(max_day))
+
+p_trend_ny <- ggplot(trend_ny, aes(x = date, y = trend, group = mode, color = mode)) +
+  geom_vline(data = subset(resids, holiday == TRUE),
+             mapping = aes(xintercept = date),
+             color = my_colors("bly")[5], size = 2.9, alpha = 0.1) +
+  geom_line(size = 0.5) +
+  scale_color_manual(values = my_colors("bly")) +
+  labs(x = "Date", y = "Trend", color = "Mode",
+       title = "New York City, trend component for activity data",
+       subtitle = "Weekends shown as vertical bars.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       caption = "Data: Apple. Graph: @kjhealy") +
+  theme(legend.position = "top")
+
+ggsave(here("data-raw/figures/nyc_trend.pdf"), p_trend_ny, width = 10, height = 7)
+ggsave(here("data-raw/figures/nyc_trend.png"), p_trend_ny, width = 10, height = 7, dpi = 300)
+
+
+
+
+## NY vs SF vs Chicago vs LA
+focus_on <- c("New York City", "Chicago", "Los Angeles", "Dallas", "Philadelphia", "Washington DC", "Atlanta", "San Francisco - Bay Area", "Boston")
+
+## Raw
+raw_ts <- apple_mobility %>%
+  filter(geo_type == "city") %>%
+  select(region:index) %>%
+  rename(mode = transportation_type) %>%
+  mutate(mode = tools::toTitleCase(mode),
+         weekend = isWeekend(date),
+         holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
+  filter(region %in% focus_on) %>%
+  group_by(region) %>%
+  mutate(max_day = ifelse(is_max(index), date, NA),
+         max_day = as_date(max_day))
+
+
+p_raw_us <- ggplot(raw_ts, mapping = aes(x = date, y = index,
+                                      group = mode, color = mode)) +
+  geom_vline(data = subset(raw_ts, holiday == TRUE),
+             mapping = aes(xintercept = date),
+             color = my_colors("bly")[5], size = 1.5, alpha = 0.1) +
+  geom_hline(yintercept = 100, color = "gray40") +
+  geom_line() +
+  geom_text_repel(aes(label = format(max_day, format = "%a %b %d")),
+                  size = rel(2), nudge_x = 1, show.legend = FALSE) +
+  scale_color_manual(values = my_colors("bly")) +
+  facet_wrap(~ region) +
+  labs(x = "Date", y = "Relative Mobility",
+       color = "Mode",
+       title = "Relative trends in activity, selected cities. Baseline data with no correction for weekly seasonality",
+       subtitle = "Data are indexed to 100 for each city's usage on January 13th 2020. Weekends shown as vertical bars. Date with highest relative activity index labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       caption = "Data: Apple. Graph: @kjhealy") +
+  theme(legend.position = "top")
+
+p_raw_us
+
+ggsave(here("data-raw/figures/raw_us.pdf"), p_raw_us, width = 15, height = 10)
+ggsave(here("data-raw/figures/raw_us.png"), p_raw_us, width = 15, height = 10, dpi = 300)
+
+
+resids <- apple_mobility %>%
+  filter(geo_type == "city") %>%
+  select(region:index) %>%
+  rename(mode = transportation_type) %>%
+  mutate(mode = tools::toTitleCase(mode)) %>%
+  filter(region %in% focus_on) %>%
+  as_tsibble(key = c(region, mode)) %>%
+  #  model(classical_decomposition(index)) %>%
+  model(STL(index)) %>%
+  components() %>%
+  mutate(weekend = isWeekend(date),
+         holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
+  as_tibble() %>%
+  group_by(region) %>%
+  mutate(max_day = ifelse(is_max(remainder), date, NA),
+         max_day = as_date(max_day))
+
+p_us_resids <- ggplot(resids, aes(x = date, y = remainder, group = mode, color = mode)) +
+  geom_vline(data = subset(resids, holiday == TRUE),
+             mapping = aes(xintercept = date),
+             color = my_colors("bly")[5], size = 1.5, alpha = 0.1) +
+  geom_line(size = 0.5) +
+  geom_text_repel(aes(label = format(max_day, format = "%a %b %d")),
+                  size = rel(2), nudge_x = 1, show.legend = FALSE) +
+  scale_color_manual(values = my_colors("bly")) +
+  facet_wrap(~ region) +
+  labs(x = "Date", y = "Remainder", color = "Mode",
+       title = "Remainder component for activity data (after trend and weekly components removed)",
+       subtitle = "Weekends shown as vertical bars. Date with highest remainder component labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       caption = "Data: Apple. Graph: @kjhealy") +
+  theme(legend.position = "top")
+
+ggsave(here("data-raw/figures/remainders_us.pdf"), p_us_resids, width = 15, height = 10)
+ggsave(here("data-raw/figures/remainders_us.png"), p_us_resids, width = 15, height = 10, dpi = 300)
+
+
+```
+
