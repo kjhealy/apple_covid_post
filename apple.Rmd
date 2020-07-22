@@ -122,7 +122,25 @@ p_base_all <- apple_mobility %>%
 ggsave(here("figures/all_cities_raw.png"), p_base_all, width = 20, height = 30, dpi = 300)
 ```
 
-Create a `tsibble` object of the cities of interest. There's some missing data we have to deal with, too.
+Create a `tsibble` object of the cities of interest. Apple has expanded the number of cities covered, so we run into the following problem:
+
+```{r}
+
+apple_mobility %>%
+  filter(geo_type %in% "city") %>%
+  rename(mode = transportation_type) %>%
+  select(country, region, mode, date, score) %>%
+  duplicates(key = c(region, mode), index = date) %>%
+  group_by(country, region) %>%
+  tally()
+
+```
+
+Some cities have the same names. We have Dublin (Ireland) and Dublin (Georgia, as readers of the first page of _Finnegans Wake_ will recall). Similarly, Birmingham (UK and Alabama), Reading (UK and Pennsylvania), and Naples (Italy and Florida). This will mess up our attempt to create a `tsibble` uniquely keyed by city and mode of transportation.
+
+There's some missing data we have to deal with, too, if we want to use some time series tools.
+
+For now we'll just focus on some cities rather than every single one.
 
 ```{r}
 focus_on <- c("Rio de Janeiro", "Lyon", "Bochum - Dortmund", "Dusseldorf",
