@@ -51,12 +51,14 @@ theme_covid <- function() {
 
 theme_set(theme_myriad_semi())
 ## --------------------------------------------------------------------
+```
 
-
+```{r}
 ## --------------------------------------------------------------------
 ## For the time series decomposition
 library(tsibble)
 library(feasts)
+library(fable)
 library(timeDate)
 ## --------------------------------------------------------------------
 
@@ -93,13 +95,21 @@ head(apple_mobility)
 tail(apple_mobility)
 ```
 
+We're going to rename the `index` column to `score`, because weird things can happen with `dplyr` and especially `tsibble` (and related functions from the `fable` and `feasts` packages) if you have a column named `index`.
+
+```{r}
+apple_mobility <- apple_mobility %>%
+  rename(score = index)
+```
+
+
 ```{r}
 ## Quick look
 p_base_all <- apple_mobility %>%
   filter(geo_type == "city") %>%
-  select(region:index) %>%
+  select(region:score) %>%
   rename(mode = transportation_type) %>%
-  ggplot(aes(x = date, y = index, group = mode, color = mode)) +
+  ggplot(aes(x = date, y = score, group = mode, color = mode)) +
   geom_line(size = 0.5) +
   scale_color_manual(values = my_colors("bly")) +
   facet_wrap(~ region, ncol = 8) +
@@ -110,17 +120,35 @@ p_base_all <- apple_mobility %>%
   theme(legend.position = "top")
 
 ggsave(here("figures/all_cities_raw.png"), p_base_all, width = 20, height = 30, dpi = 300)
+```
 
+Create a `tsibble` object of the cities of interest. There's some missing data we have to deal with, too.
 
+```{r}
+focus_on <- c("Rio de Janeiro", "Lyon", "Bochum - Dortmund", "Dusseldorf",
+              "Barcelona", "Detroit", "Toulouse", "Stuttgart",
+              "Cologne", "Hamburg", "Cairo", "Lille", "New York")
 
-apple_mobility %>%
-  filter(geo_type == "city") %>%
-  select(region:index) %>%
+apple_tsb <- apple_mobility %>%
+  filter(region %in% focus_on) %>%
   rename(mode = transportation_type) %>%
-  as_tsibble(key = c(region, mode)) %>%
-  model(STL(index)) %>%
+  select(country, region, mode, date, score) %>%
+  as_tsibble(key = c(region, mode), index = date) 
+
+apple_tsb <- apple_tsb %>%
+  model(arima = ARIMA(score ~ trend())) %>%
+  interpolate(apple_tsb)
+
+```
+
+Now we can do some decompositions. In what follows we'll move back and forth between the base `apple_mobility` data (which includes missing values) and the `apple_tsb` object, which is a `tsibble` object that's had missing values interpolated, in preparation for the STL decomposition that we'll do.
+
+```{r}
+
+apple_tsb %>%
+  model(STL(score)) %>%
   components() %>%
-  ggplot(aes(x = date, y = remainder, group = mode, color = mode)) +
+  ggplot(aes(x = date, y = trend, group = mode, color = mode)) +
   geom_line(size = 0.5) +
   scale_color_manual(values = my_colors("bly")) +
   facet_wrap(~ region, ncol = 8) +
@@ -129,31 +157,27 @@ apple_mobility %>%
        title = "Driving, Selected Cities, Trend Component",
        caption = "Data: Apple. Graph: @kjhealy") +
   theme(legend.position = "top")
+```
 
-
-
-focus_on <- c("Rio de Janeiro", "Lyon", "Bochum - Dortmund", "Dusseldorf",
-              "Barcelona", "Detroit", "Toulouse", "Stuttgart",
-              "Cologne", "Hamburg", "Cairo", "Lille")
-
+```{r}
 ## Raw
 raw_ts <- apple_mobility %>%
   filter(geo_type == "city") %>%
-  select(region:index) %>%
+  select(region:score) %>%
   rename(mode = transportation_type) %>%
   mutate(mode = tools::toTitleCase(mode),
          weekend = isWeekend(date),
          holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
   filter(region %in% focus_on) %>%
   group_by(region) %>%
-  mutate(max_day = ifelse(is_max(index), date, NA),
+  mutate(max_day = ifelse(is_max(score), date, NA),
          max_day = as_date(max_day))
 
 
 raw_ts %>%
   filter(!is.na(max_day))
 
-p_raw <- ggplot(raw_ts, mapping = aes(x = date, y = index,
+p_raw <- ggplot(raw_ts, mapping = aes(x = date, y = score,
                        group = mode, color = mode)) +
   geom_vline(data = subset(raw_ts, holiday == TRUE),
              mapping = aes(xintercept = date),
@@ -167,7 +191,7 @@ p_raw <- ggplot(raw_ts, mapping = aes(x = date, y = index,
   labs(x = "Date", y = "Relative Mobility",
        color = "Mode",
        title = "Relative trends in activity, selected cities. Baseline data with no correction for weekly seasonality",
-       subtitle = "Data are indexed to 100 for each city's usage on January 13th 2020. Weekends shown as vertical bars. Date with highest relative activity index labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       subtitle = "Data are indexed to 100 for each city's usage on January 13th 2020. Weekends shown as vertical bars. Date with highest relative activity score labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
        caption = "Data: Apple. Graph: @kjhealy") +
   theme(legend.position = "top")
 
@@ -176,7 +200,7 @@ p_raw
 ggsave(here("figures/raw.pdf"), p_raw, width = 15, height = 10)
 
 
-p_raw_tall <- ggplot(raw_ts, mapping = aes(x = date, y = index,
+p_raw_tall <- ggplot(raw_ts, mapping = aes(x = date, y = score,
                                       group = mode, color = mode)) +
   geom_vline(data = subset(raw_ts, holiday == TRUE),
              mapping = aes(xintercept = date),
@@ -196,25 +220,21 @@ p_raw_tall <- ggplot(raw_ts, mapping = aes(x = date, y = index,
 
 ggsave(here("figures/raw_tall.pdf"), p_raw_tall, width = 8, height = 12)
 ggsave(here("figures/raw_tall.png"), p_raw_tall, width = 8, height = 12, dpi = 300)
+```
 
+```{r}
 feats <- apple_mobility %>%
-  filter(geo_type == "city") %>%
-  select(region:index) %>%
+  filter(region %in% focus_on) %>%
+  select(region:score) %>%
   rename(mode = transportation_type) %>%
   mutate(mode = tools::toTitleCase(mode)) %>%
   filter(region %in% focus_on) %>%
   as_tsibble(key = c(region, mode)) %>%
-  features(index, feature_set(tags = "stl"))
+  features(score, feature_set(tags = "stl"))
 
-resids <- apple_mobility %>%
-  filter(geo_type == "city") %>%
-  select(region:index) %>%
-  rename(mode = transportation_type) %>%
+resids <- apple_tsb %>%
   mutate(mode = tools::toTitleCase(mode)) %>%
-  filter(region %in% focus_on) %>%
-  as_tsibble(key = c(region, mode)) %>%
-#  model(classical_decomposition(index)) %>%
-  model(STL(index)) %>%
+  model(STL(score)) %>%
   components() %>%
   mutate(weekend = isWeekend(date),
          holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
@@ -258,22 +278,22 @@ p_resid_tall <- ggplot(resids, aes(x = date, y = remainder, group = mode, color 
 
 ggsave(here("figures/remainders_tall.pdf"), p_resid_tall, width = 8, height = 12)
 ggsave(here("figures/remainders_tall.png"), p_resid_tall, width = 8, height = 12, dpi = 300)
+```
 
-
-
+```{r}
 ## NYC
 
 raw_ny <- apple_mobility %>%
   filter(region == "New York City") %>%
-  select(region:index) %>%
+  select(region:score) %>%
   rename(mode = transportation_type) %>%
   mutate(mode = tools::toTitleCase(mode),
          weekend = isWeekend(date),
          holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
-  mutate(max_day = ifelse(is_max(index), date, NA),
+  mutate(max_day = ifelse(is_max(score), date, NA),
          max_day = as_date(max_day))
 
-p_raw_ny <- ggplot(raw_ny, mapping = aes(x = date, y = index,
+p_raw_ny <- ggplot(raw_ny, mapping = aes(x = date, y = score,
                                       group = mode, color = mode)) +
   geom_vline(data = subset(raw_ny, holiday == TRUE),
              mapping = aes(xintercept = date),
@@ -286,7 +306,7 @@ p_raw_ny <- ggplot(raw_ny, mapping = aes(x = date, y = index,
   labs(x = "Date", y = "Relative Mobility",
        color = "Mode",
        title = "New York City's relative trends in activity. Baseline data with no correction for weekly seasonality",
-       subtitle = "Data are indexed to 100 for usage on January 13th 2020. Weekends shown as vertical bars. Date with highest relative activity index labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       subtitle = "Data are indexed to 100 for usage on January 13th 2020. Weekends shown as vertical bars. Date with highest relative activity score labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
        caption = "Data: Apple. Graph: @kjhealy") +
   theme(legend.position = "top")
 
@@ -295,13 +315,10 @@ p_raw_ny
 ggsave(here("figures/nyc_raw.pdf"), plot = p_raw_ny, height = 7, width = 10)
 ggsave(here("figures/nyc_raw.png"), plot = p_raw_ny, height = 7, width = 10, dpi = 300)
 
-resids_ny <- apple_mobility %>%
+resids_ny <- apple_tsb %>%
   filter(region == "New York City") %>%
-  select(region:index) %>%
-  rename(mode = transportation_type) %>%
   mutate(mode = tools::toTitleCase(mode)) %>%
-  as_tsibble(key = c(region, mode)) %>%
-  model(STL(index)) %>%
+  model(STL(score)) %>%
   components() %>%
   mutate(weekend = isWeekend(date),
          holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
@@ -325,14 +342,13 @@ p_resid_ny <- ggplot(resids_ny, aes(x = date, y = remainder, group = mode, color
 
 ggsave(here("figures/nyc_remainders.pdf"), p_resid_ny, width = 10, height = 7)
 ggsave(here("figures/nyc_remainders.png"), p_resid_ny, width = 10, height = 7, dpi = 300)
+```
 
-trend_ny <- apple_mobility %>%
+```{r}
+trend_ny <- apple_tsb %>%
   filter(region == "New York City") %>%
-  select(region:index) %>%
-  rename(mode = transportation_type) %>%
   mutate(mode = tools::toTitleCase(mode)) %>%
-  as_tsibble(key = c(region, mode)) %>%
-  model(STL(index)) %>%
+  model(STL(score)) %>%
   components() %>%
   mutate(weekend = isWeekend(date),
          holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
@@ -355,27 +371,30 @@ p_trend_ny <- ggplot(trend_ny, aes(x = date, y = trend, group = mode, color = mo
 ggsave(here("figures/nyc_trend.pdf"), p_trend_ny, width = 10, height = 7)
 ggsave(here("figures/nyc_trend.png"), p_trend_ny, width = 10, height = 7, dpi = 300)
 
+```
 
 
-
+```{r}
 ## NY vs SF vs Chicago vs LA
-focus_on <- c("New York City", "Chicago", "Los Angeles", "Dallas", "Philadelphia", "Washington DC", "Atlanta", "San Francisco - Bay Area", "Boston")
+us_big_focus <- c("New York City", "Chicago", "Los Angeles", "Dallas", "Philadelphia", "Washington DC", "Atlanta", "San Francisco - Bay Area", "Boston")
+
+
 
 ## Raw
 raw_ts <- apple_mobility %>%
-  filter(geo_type == "city") %>%
-  select(region:index) %>%
+  filter(region %in% us_big_focus) %>%
+  select(region:score) %>%
   rename(mode = transportation_type) %>%
   mutate(mode = tools::toTitleCase(mode),
          weekend = isWeekend(date),
          holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
   filter(region %in% focus_on) %>%
   group_by(region) %>%
-  mutate(max_day = ifelse(is_max(index), date, NA),
+  mutate(max_day = ifelse(is_max(score), date, NA),
          max_day = as_date(max_day))
 
 
-p_raw_us <- ggplot(raw_ts, mapping = aes(x = date, y = index,
+p_raw_us <- ggplot(raw_ts, mapping = aes(x = date, y = score,
                                       group = mode, color = mode)) +
   geom_vline(data = subset(raw_ts, holiday == TRUE),
              mapping = aes(xintercept = date),
@@ -389,7 +408,7 @@ p_raw_us <- ggplot(raw_ts, mapping = aes(x = date, y = index,
   labs(x = "Date", y = "Relative Mobility",
        color = "Mode",
        title = "Relative trends in activity, selected cities. Baseline data with no correction for weekly seasonality",
-       subtitle = "Data are indexed to 100 for each city's usage on January 13th 2020. Weekends shown as vertical bars. Date with highest relative activity index labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
+       subtitle = "Data are indexed to 100 for each city's usage on January 13th 2020. Weekends shown as vertical bars. Date with highest relative activity score labeled.\nNote that in Apple's data 'Days' are defined as Midnight to Midnight PST.",
        caption = "Data: Apple. Graph: @kjhealy") +
   theme(legend.position = "top")
 
@@ -397,17 +416,29 @@ p_raw_us
 
 ggsave(here("figures/raw_us.pdf"), p_raw_us, width = 15, height = 10)
 ggsave(here("figures/raw_us.png"), p_raw_us, width = 15, height = 10, dpi = 300)
+```
 
+Make a new `tsibble` object for US cities.
 
-resids <- apple_mobility %>%
-  filter(geo_type == "city") %>%
-  select(region:index) %>%
+```{r}
+us_big_tsb <- apple_mobility %>%
+  filter(region %in% us_big_focus) %>%
   rename(mode = transportation_type) %>%
+  select(country, region, mode, date, score) %>%
+  as_tsibble(key = c(region, mode), index = date) 
+
+## missing data again
+us_big_tsb <- us_big_tsb %>%
+  model(arima = ARIMA(score ~ trend())) %>%
+  interpolate(us_big_tsb)
+
+```
+
+
+```{r}
+resids <- us_big_tsb %>%
   mutate(mode = tools::toTitleCase(mode)) %>%
-  filter(region %in% focus_on) %>%
-  as_tsibble(key = c(region, mode)) %>%
-  #  model(classical_decomposition(index)) %>%
-  model(STL(index)) %>%
+  model(STL(score)) %>%
   components() %>%
   mutate(weekend = isWeekend(date),
          holiday = isHoliday(as.timeDate(date), listHolidays())) %>%
