@@ -25,10 +25,11 @@ library(janitor)
 library(socviz)
 library(ggrepel)
 library(covdata)
+```
 
+```{r, eval = FALSE}
 ## --------------------------------------------------------------------
-## Custom font and theme, omit if you don't have the myriad library
-## (https://github.com/kjhealy/myriad) and associated Adobe fonts.
+## Custom font and theme. By default this code chunk is not evaluated.
 ## --------------------------------------------------------------------
 library(showtext)
 showtext_auto()
