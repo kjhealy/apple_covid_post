@@ -146,7 +146,7 @@ For now we'll just focus on some cities rather than every single one.
 ```{r}
 focus_on <- c("Rio de Janeiro", "Lyon", "Bochum - Dortmund", "Dusseldorf",
               "Barcelona", "Detroit", "Toulouse", "Stuttgart",
-              "Cologne", "Hamburg", "Cairo", "Lille", "New York")
+              "Cologne", "Hamburg", "Cairo", "Lille", "New York City")
 
 apple_tsb <- apple_mobility %>%
   filter(region %in% focus_on) %>%
@@ -395,7 +395,8 @@ ggsave(here("figures/nyc_trend.png"), p_trend_ny, width = 10, height = 7, dpi = 
 
 ```{r}
 ## NY vs SF vs Chicago vs LA
-us_big_focus <- c("New York City", "Chicago", "Los Angeles", "Dallas", "Philadelphia", "Washington DC", "Atlanta", "San Francisco - Bay Area", "Boston")
+us_big_focus <- c("New York City", "Chicago", "Los Angeles", "Dallas", 
+                  "Philadelphia", "Washington DC", "Atlanta", "San Francisco - Bay Area", "Boston")
 
 
 
