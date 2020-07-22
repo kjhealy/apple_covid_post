@@ -10,7 +10,7 @@ date: '`r format(Sys.Date(), "%B %d, %Y")`'
 
 Code to accompany [this blog post](https://kieranhealy.org/blog/archives/2020/04/23/apples-covid-mobility-data/). 
 If you don't have them, install the required libraries with `install.packages()`. Install the `covdata` package 
-by following [the instructions at the package's homepage](https://kjhealy.github.io/covdata).
+by following [the instructions at the package's homepage](https://kjhealy.github.io/covdata). For this Rmd file to work properly, the most recent version of `covdata` is recommended, and at least version 0.4 is required.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, 
@@ -95,14 +95,6 @@ ifelse(!dir.exists(here("figures")),
 head(apple_mobility)
 tail(apple_mobility)
 ```
-
-We're going to rename the `index` column to `score`, because weird things can happen with `dplyr` and especially `tsibble` (and related functions from the `fable` and `feasts` packages) if you have a column named `index`.
-
-```{r}
-apple_mobility <- apple_mobility %>%
-  rename(score = index)
-```
-
 
 ```{r}
 ## Quick look
